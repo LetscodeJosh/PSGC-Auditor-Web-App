@@ -1,36 +1,163 @@
-import io
 import json
 import time
 from urllib.parse import quote
-import pandas as pd
 import requests
 import streamlit as st
 
 st.set_page_config(
-    page_title="ERPN PSGC 1-by-1 Auditor",
+    page_title="ERPNext Live PSGC Auditor",
     page_icon="✅",
     layout="wide",
+    initial_sidebar_state="collapsed",
 )
 
-# Theme-adaptive CSS (Dark Mode & Light Mode safe)
+# Minimalist, theme-adaptive CSS with Sidebar hidden and equal-height aligned preview cards
 st.markdown(
     """
     <style>
-        .block-container { padding-top: 1.2rem; padding-bottom: 1.5rem; }
-        div[data-testid="stMetric"] {
-            background-color: rgba(128, 128, 128, 0.12) !important;
-            border: 1px solid rgba(128, 128, 128, 0.28) !important;
-            padding: 14px 18px !important;
-            border-radius: 10px !important;
+        /* Hide sidebar and sidebar toggle completely for security */
+        [data-testid="stSidebar"],
+        [data-testid="collapsedControl"],
+        [data-testid="stSidebarCollapsedControl"] {
+            display: none !important;
         }
-        div[data-testid="stMetricLabel"] p,
-        div[data-testid="stMetricValue"] div {
-            color: inherit !important;
+        .block-container {
+            padding-top: 1.5rem;
+            padding-bottom: 2rem;
+            max-width: 1200px;
+        }
+        /* Status Header Banner */
+        .status-banner-ok {
+            background-color: rgba(46, 204, 113, 0.14);
+            border: 1px solid rgba(46, 204, 113, 0.45);
+            color: #2ecc71;
+            padding: 12px 18px;
+            border-radius: 10px;
+            font-weight: 600;
+            font-size: 1rem;
+            margin-bottom: 16px;
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+        }
+        .status-banner-err {
+            background-color: rgba(255, 75, 75, 0.14);
+            border: 1px solid rgba(255, 75, 75, 0.45);
+            color: #ff4b4b;
+            padding: 12px 18px;
+            border-radius: 10px;
+            font-weight: 600;
+            font-size: 1rem;
+            margin-bottom: 16px;
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+        }
+        /* Equal-height aligned PSGC preview cards */
+        .psgc-card {
+            background-color: rgba(128, 128, 128, 0.08);
+            border: 1px solid rgba(128, 128, 128, 0.25);
+            border-radius: 12px;
+            padding: 18px 20px;
+            height: 215px;
+            display: flex;
+            flex-direction: column;
+            justify-content: space-between;
+        }
+        .psgc-level {
+            font-size: 0.76rem;
+            font-weight: 700;
+            letter-spacing: 0.08em;
+            text-transform: uppercase;
+            opacity: 0.65;
+            margin-bottom: 4px;
+        }
+        .psgc-name {
+            font-size: 1.15rem;
+            font-weight: 700;
+            line-height: 1.3;
+            margin-bottom: 8px;
+            overflow: hidden;
+            text-overflow: ellipsis;
+            display: -webkit-box;
+            -webkit-line-clamp: 2;
+            -webkit-box-orient: vertical;
+        }
+        .psgc-code {
+            font-family: 'SFMono-Regular', Consolas, 'Liberation Mono', Menlo, monospace;
+            font-size: 1.35rem;
+            font-weight: 700;
+            color: #2ecc71;
+            background-color: rgba(46, 204, 113, 0.12);
+            border: 1px solid rgba(46, 204, 113, 0.3);
+            padding: 6px 12px;
+            border-radius: 8px;
+            display: inline-block;
+            width: fit-content;
+            margin-bottom: 10px;
+        }
+        .psgc-link-ok {
+            font-size: 0.85rem;
+            font-weight: 600;
+            color: #2ecc71;
+            background-color: rgba(46, 204, 113, 0.10);
+            padding: 6px 10px;
+            border-radius: 6px;
+            border-left: 3px solid #2ecc71;
+        }
+        .psgc-link-err {
+            font-size: 0.85rem;
+            font-weight: 600;
+            color: #ff4b4b;
+            background-color: rgba(255, 75, 75, 0.10);
+            padding: 6px 10px;
+            border-radius: 6px;
+            border-left: 3px solid #ff4b4b;
+        }
+        /* Aligned Summary Table */
+        .summary-table {
+            width: 100%;
+            border-collapse: collapse;
+            margin-top: 14px;
+            font-size: 0.92rem;
+            border-radius: 10px;
+            overflow: hidden;
+            border: 1px solid rgba(128, 128, 128, 0.25);
+        }
+        .summary-table th {
+            background-color: rgba(128, 128, 128, 0.15);
+            text-align: left;
+            padding: 10px 14px;
+            font-weight: 700;
+            font-size: 0.8rem;
+            text-transform: uppercase;
+            letter-spacing: 0.05em;
+            border-bottom: 1px solid rgba(128, 128, 128, 0.25);
+        }
+        .summary-table td {
+            padding: 12px 14px;
+            border-bottom: 1px solid rgba(128, 128, 128, 0.15);
+            vertical-align: middle;
+        }
+        .mono-cell {
+            font-family: 'SFMono-Regular', Consolas, monospace;
+            font-weight: 700;
+            color: #2ecc71;
         }
     </style>
     """,
     unsafe_allow_html=True,
 )
+
+# Backend credentials (never rendered in UI; supports Streamlit Cloud Secrets override)
+try:
+    ERPN_BASE_URL = st.secrets.get("ERPN_URL", "https://dev.pmii-marketing.com")
+    ERPN_USERNAME = st.secrets.get("ERPN_USER", "jptan@profinsights.biz")
+    ERPN_PASSWORD = st.secrets.get("ERPN_PASS", "pims@admin")
+except Exception:
+    ERPN_BASE_URL = "https://dev.pmii-marketing.com"
+    ERPN_USERNAME = "jptan@profinsights.biz"
+    ERPN_PASSWORD = "pims@admin"
 
 SYSTEM_KEYS = {
     "name",
@@ -60,7 +187,7 @@ SYSTEM_KEYS = {
 
 @st.cache_resource(show_spinner=False)
 def get_erpn_session(base_url: str, username: str, password: str):
-    """Authenticates with ERPNext and returns a persistent session."""
+    """Authenticates with ERPNext in the backend and returns a persistent session."""
     base_url = base_url.rstrip("/")
     session = requests.Session()
     resp = session.post(
@@ -72,7 +199,7 @@ def get_erpn_session(base_url: str, username: str, password: str):
     return session
 
 
-def extract_doc_name(data: dict, code: str, fallback_names: dict | None = None) -> str:
+def extract_doc_name(data: dict, code: str) -> str:
     """Extracts the human-readable Location Name from an ERPNext PSGC Location doc."""
     code_str = str(code).strip()
     for k in (
@@ -96,13 +223,11 @@ def extract_doc_name(data: dict, code: str, fallback_names: dict | None = None) 
             if v_clean and v_clean != code_str and not v_clean.isdigit():
                 return v_clean
 
-    if fallback_names and code_str in fallback_names and fallback_names[code_str]:
-        return fallback_names[code_str]
     return code_str
 
 
 def detect_name_fieldname(sample_data: dict, sample_code: str) -> str | None:
-    """Auto-detects the custom fieldname used for Location Name in ERPNext."""
+    """Auto-detects the fieldname used for Location Name in ERPNext."""
     code_str = str(sample_code).strip()
     for k in (
         "location_name",
@@ -134,7 +259,6 @@ def fetch_erpn_psgc_hierarchy(
     base_url = base_url.rstrip("/")
     session = get_erpn_session(base_url, username, password)
 
-    # 1. Inspect a known root region doc (0100000000) to auto-detect the Location Name fieldname
     sample_resp = session.get(
         f"{base_url}/api/resource/PSGC Location/0100000000", timeout=15
     )
@@ -149,7 +273,7 @@ def fetch_erpn_psgc_hierarchy(
     id_to_name = {}
     id_to_parent = {}
 
-    # 2. Fetch Level 1 Regions (parent_psgc_location is not set)
+    # Level 1: Regions
     resp_reg = session.get(
         f"{base_url}/api/resource/PSGC Location",
         params={
@@ -174,7 +298,7 @@ def fetch_erpn_psgc_hierarchy(
     if not reg_ids:
         return id_to_name, id_to_parent
 
-    # 3. Fetch Level 2 Provinces (parent_psgc_location in reg_ids)
+    # Level 2: Provinces
     resp_prov = session.get(
         f"{base_url}/api/resource/PSGC Location",
         params={
@@ -197,7 +321,7 @@ def fetch_erpn_psgc_hierarchy(
             id_to_parent[cid] = parent
             id_to_name[cid] = extract_doc_name(p, cid)
 
-    # 4. Fetch Level 3 Cities/Municipalities in chunks
+    # Level 3: Cities/Municipalities
     chunk_size = 25
     for i in range(0, len(prov_ids), chunk_size):
         chunk = prov_ids[i : i + chunk_size]
@@ -243,69 +367,16 @@ def fetch_single_psgc_doc(
     if not data:
         return None
 
-    loc_name = extract_doc_name(data, code_str, fallback_names)
+    loc_name = extract_doc_name(data, code_str)
+    if (not loc_name or loc_name == code_str) and fallback_names:
+        loc_name = fallback_names.get(code_str, code_str)
+
     parent = data.get("parent_psgc_location") or data.get("parent") or ""
     return {
         "name": str(data.get("name", code_str)).strip(),
         "location_name": loc_name,
         "parent_psgc_location": str(parent).strip() if parent else "",
     }
-
-
-@st.cache_data(show_spinner=False)
-def load_fallback_tree(file_bytes: bytes) -> tuple[dict, dict]:
-    """Loads PSGC_Clean sheet from uploaded workbook if available."""
-    xls = pd.ExcelFile(io.BytesIO(file_bytes))
-    if "PSGC_Clean" not in xls.sheet_names:
-        return {}, {}
-    psgc_clean = pd.read_excel(
-        io.BytesIO(file_bytes), sheet_name="PSGC_Clean", dtype=str
-    ).fillna("")
-    id_to_name = {}
-    id_to_parent = {}
-    for _, r in psgc_clean.iterrows():
-        reg_id = str(r["Region_ID"]).strip()
-        reg_name = str(r["Region_Name"]).strip()
-        prov_id = str(r["Province_ID"]).strip()
-        prov_name = str(r["Province_Name"]).strip()
-        city_id = str(r["City_ID"]).strip()
-        city_name = str(r["City_Name"]).strip()
-
-        id_to_name[reg_id] = reg_name
-        id_to_parent[reg_id] = ""
-        id_to_name[prov_id] = prov_name
-        id_to_parent[prov_id] = reg_id
-        id_to_name[city_id] = city_name
-        id_to_parent[city_id] = prov_id
-
-    return id_to_name, id_to_parent
-
-
-def get_combined_psgc_maps(
-    base_url: str, username: str, password: str, file_bytes: bytes | None = None
-) -> tuple[dict, dict, str]:
-    """Combines Live ERPNext PSGC hierarchy with fallback sheet names."""
-    fb_names, fb_parents = ({}, {})
-    if file_bytes is not None:
-        fb_names, fb_parents = load_fallback_tree(file_bytes)
-
-    try:
-        live_names, live_parents = fetch_erpn_psgc_hierarchy(
-            base_url, username, password
-        )
-        if live_parents:
-            merged_names = dict(fb_names)
-            for k, v in live_names.items():
-                if v and v != k:
-                    merged_names[k] = v
-                elif k not in merged_names:
-                    merged_names[k] = v
-            merged_parents = {**fb_parents, **live_parents}
-            return merged_names, merged_parents, "Live ERPNext Doctype"
-    except Exception:
-        pass
-
-    return fb_names, fb_parents, "Embedded PSGC Reference"
 
 
 def audit_single_triplet(
@@ -319,27 +390,20 @@ def audit_single_triplet(
     id_to_parent: dict,
     progress_bar=None,
 ) -> dict:
-    """Audits a single (Region, Province, City/Municipality) 1-by-1 with progress bar."""
+    """Audits a single (Region, Province, City/Municipality) on the live ERPNext doctype."""
     reg_code = str(reg_code).strip()
     prov_code = str(prov_code).strip()
     city_code = str(city_code).strip()
 
-    live_mode = False
-    session = None
-    try:
-        session = get_erpn_session(base_url, username, password)
-        live_mode = True
-    except Exception:
-        live_mode = False
+    session = get_erpn_session(base_url, username, password)
 
     def resolve_node(code: str) -> dict | None:
-        if live_mode and session is not None:
-            try:
-                doc = fetch_single_psgc_doc(session, base_url, code, id_to_name)
-                if doc is not None:
-                    return doc
-            except Exception:
-                pass
+        try:
+            doc = fetch_single_psgc_doc(session, base_url, code, id_to_name)
+            if doc is not None:
+                return doc
+        except Exception:
+            pass
         if code in id_to_parent:
             return {
                 "name": code,
@@ -350,7 +414,7 @@ def audit_single_triplet(
 
     # Step 1: Verify Region
     if progress_bar:
-        progress_bar.progress(30, text=f"Step 1/3: Checking Region ({reg_code})...")
+        progress_bar.progress(35, text=f"Step 1/3: Verifying Region ({reg_code})...")
         time.sleep(0.05)
     reg_doc = resolve_node(reg_code)
     reg_ok = (
@@ -359,7 +423,7 @@ def audit_single_triplet(
         and reg_doc["parent_psgc_location"] == ""
     )
     reg_msg = (
-        "Valid Root Region"
+        "Root Region Node (Valid)"
         if reg_ok
         else (
             "Not found in PSGC"
@@ -370,7 +434,7 @@ def audit_single_triplet(
 
     # Step 2: Verify Province
     if progress_bar:
-        progress_bar.progress(65, text=f"Step 2/3: Checking Province ({prov_code})...")
+        progress_bar.progress(70, text=f"Step 2/3: Verifying Province ({prov_code})...")
         time.sleep(0.05)
     prov_doc = resolve_node(prov_code)
     prov_ok = (
@@ -391,7 +455,7 @@ def audit_single_triplet(
     # Step 3: Verify City/Municipality
     if progress_bar:
         progress_bar.progress(
-            100, text=f"Step 3/3: Checking City/Municipality ({city_code})..."
+            100, text=f"Step 3/3: Verifying City/Municipality ({city_code})..."
         )
         time.sleep(0.05)
     city_doc = resolve_node(city_code)
@@ -412,7 +476,6 @@ def audit_single_triplet(
 
     return {
         "all_ok": reg_ok and prov_ok and city_ok,
-        "source": "Live ERPNext Doctype" if live_mode else "Embedded PSGC Reference",
         "reg_ok": reg_ok,
         "reg_name": reg_doc["location_name"] if reg_doc else "NOT FOUND",
         "reg_msg": reg_msg,
@@ -425,452 +488,303 @@ def audit_single_triplet(
     }
 
 
-def to_clean_excel_bytes(df_export: pd.DataFrame) -> bytes:
-    """Exports validated DataFrame to Excel with strict Text (@) formatting."""
-    output = io.BytesIO()
-    with pd.ExcelWriter(output, engine="openpyxl") as writer:
-        df_export.to_excel(writer, sheet_name="Institution", index=False)
-        ws = writer.sheets["Institution"]
-        for row in ws.iter_rows(min_row=2, max_row=ws.max_row, min_col=2, max_col=4):
-            for cell in row:
-                cell.number_format = "@"
-    return output.getvalue()
-    
-
 # --- HEADER ---
-st.title("🏥 ERPNext PSGC 1-by-1 Auditor")
-st.caption(
-    "Step-by-Step Hierarchy Validator • Searchable by `Region` → `Province` → `City/Municipality`"
+head_col1, head_col2 = st.columns([5, 1])
+with head_col1:
+    st.title("🌐 ERPNext Live PSGC Doctype Auditor")
+    st.caption(
+        "Live Hierarchy Search & Verification • `Region` → `Province` → `City/Municipality`"
+    )
+with head_col2:
+    st.write("")
+    if st.button("🔄 Sync Live PSGC", use_container_width=True):
+        st.cache_resource.clear()
+        st.cache_data.clear()
+        st.rerun()
+
+# Load Live ERPNext PSGC Tree
+try:
+    with st.spinner("Connecting to Live ERPNext PSGC Location doctype..."):
+        m_names, m_parents = fetch_erpn_psgc_hierarchy(
+            ERPN_BASE_URL, ERPN_USERNAME, ERPN_PASSWORD
+        )
+except Exception as exc:
+    st.error(
+        f"Unable to reach Live ERPNext PSGC Doctype. Please click Sync Live PSGC. ({exc})"
+    )
+    st.stop()
+
+if not m_parents:
+    st.warning("No PSGC Location records returned from ERPNext.")
+    st.stop()
+
+# Build Region, Province, and City lookup maps
+all_regions = {
+    f"{m_names.get(k, k)} ({k})": k for k, p in m_parents.items() if p == ""
+}
+reg_set = set(all_regions.values())
+
+all_provinces = {
+    f"{m_names.get(k, k)} ({k})": k
+    for k, p in m_parents.items()
+    if p in reg_set
+}
+prov_set = set(all_provinces.values())
+
+all_cities = {
+    f"{m_names.get(k, k)} ({k})": k
+    for k, p in m_parents.items()
+    if p in prov_set
+}
+
+# --- SEARCH PANEL (3 Aligned Columns) ---
+with st.container(border=True):
+    col_a, col_b, col_c = st.columns(3)
+
+    with col_a:
+        m_reg_label = st.selectbox(
+            "LEVEL 1 • REGION",
+            options=sorted(all_regions.keys()),
+            index=None,
+            placeholder="🔍 Search Region name or code...",
+        )
+        m_reg_code = all_regions.get(m_reg_label, "") if m_reg_label else ""
+
+    with col_b:
+        scoped_provs = {
+            lbl: k
+            for lbl, k in all_provinces.items()
+            if not m_reg_code or m_parents.get(k) == m_reg_code
+        }
+        m_prov_label = st.selectbox(
+            "LEVEL 2 • PROVINCE",
+            options=sorted(scoped_provs.keys()),
+            index=None,
+            placeholder="🔍 Search Province name or code...",
+        )
+        m_prov_code = scoped_provs.get(m_prov_label, "") if m_prov_label else ""
+
+    with col_c:
+        scoped_cities = {
+            lbl: k
+            for lbl, k in all_cities.items()
+            if (not m_prov_code or m_parents.get(k) == m_prov_code)
+            and (
+                not m_reg_code
+                or m_parents.get(m_parents.get(k, ""), "") == m_reg_code
+            )
+        }
+        m_city_label = st.selectbox(
+            "LEVEL 3 • CITY / MUNICIPALITY",
+            options=sorted(scoped_cities.keys()),
+            index=None,
+            placeholder="🔍 Search City/Municipality name or code...",
+        )
+        m_city_code = scoped_cities.get(m_city_label, "") if m_city_label else ""
+
+# Auto-resolve parent hierarchy when user selects a City or Province
+effective_city = m_city_code
+effective_prov = m_prov_code or (
+    m_parents.get(effective_city, "") if effective_city else ""
+)
+effective_reg = m_reg_code or (
+    m_parents.get(effective_prov, "") if effective_prov else ""
 )
 
-tab_step, tab_manual = st.tabs(
-    ["🔍 1-by-1 File Auditor", "🌐 Live PSGC Doctype Search & Tester"]
-)
+# --- ALIGNED PREVIEW UI ---
+if effective_reg and effective_prov and effective_city:
+    m_pbar = st.progress(
+        0, text="Auditing PSGC hierarchy against Live ERPNext Doctype..."
+    )
+    m_res = audit_single_triplet(
+        effective_reg,
+        effective_prov,
+        effective_city,
+        ERPN_BASE_URL,
+        ERPN_USERNAME,
+        ERPN_PASSWORD,
+        m_names,
+        m_parents,
+        progress_bar=m_pbar,
+    )
+    m_pbar.progress(100, text="100% Verified against Live ERPNext PSGC Doctype")
 
-with tab_step:
-    uploaded_file = st.file_uploader(
-        "Upload Institution Excel File (`.xlsx`)", type=["xlsx"]
+    # 1. Clean Top Status Banner
+    if m_res["all_ok"]:
+        st.markdown(
+            """
+            <div class="status-banner-ok">
+                <span>✅ 100% Valid Hierarchy (Live ERPNext Doctype)</span>
+                <span style="font-size: 0.85rem; opacity: 0.85;">Region → Province → City/Municipality Verified</span>
+            </div>
+            """,
+            unsafe_allow_html=True,
+        )
+    else:
+        st.markdown(
+            """
+            <div class="status-banner-err">
+                <span>❌ Hierarchy Mismatch Detected</span>
+                <span style="font-size: 0.85rem; opacity: 0.85;">Please review the parent-child links below</span>
+            </div>
+            """,
+            unsafe_allow_html=True,
+        )
+
+    # 2. Three Perfectly Aligned Equal-Height Preview Cards (Region | Province | City/Municipality)
+    c1, c2, c3 = st.columns(3)
+
+    with c1:
+        reg_cls = "psgc-link-ok" if m_res["reg_ok"] else "psgc-link-err"
+        reg_icon = "✔" if m_res["reg_ok"] else "✖"
+        st.markdown(
+            f"""
+            <div class="psgc-card">
+                <div>
+                    <div class="psgc-level">LEVEL 1 • REGION</div>
+                    <div class="psgc-name">{m_res['reg_name']}</div>
+                </div>
+                <div>
+                    <div class="psgc-code">{effective_reg}</div>
+                    <div class="{reg_cls}">{reg_icon} {m_res['reg_msg']}</div>
+                </div>
+            </div>
+            """,
+            unsafe_allow_html=True,
+        )
+
+    with c2:
+        prov_cls = "psgc-link-ok" if m_res["prov_ok"] else "psgc-link-err"
+        prov_icon = "✔" if m_res["prov_ok"] else "✖"
+        st.markdown(
+            f"""
+            <div class="psgc-card">
+                <div>
+                    <div class="psgc-level">LEVEL 2 • PROVINCE</div>
+                    <div class="psgc-name">{m_res['prov_name']}</div>
+                </div>
+                <div>
+                    <div class="psgc-code">{effective_prov}</div>
+                    <div class="{prov_cls}">{prov_icon} {m_res['prov_msg']}</div>
+                </div>
+            </div>
+            """,
+            unsafe_allow_html=True,
+        )
+
+    with c3:
+        city_cls = "psgc-link-ok" if m_res["city_ok"] else "psgc-link-err"
+        city_icon = "✔" if m_res["city_ok"] else "✖"
+        st.markdown(
+            f"""
+            <div class="psgc-card">
+                <div>
+                    <div class="psgc-level">LEVEL 3 • CITY / MUNICIPALITY</div>
+                    <div class="psgc-name">{m_res['city_name']}</div>
+                </div>
+                <div>
+                    <div class="psgc-code">{effective_city}</div>
+                    <div class="{city_cls}">{city_icon} {m_res['city_msg']}</div>
+                </div>
+            </div>
+            """,
+            unsafe_allow_html=True,
+        )
+
+    # 3. Aligned Single-Row Summary Table for ERPNext Data Import Reference
+    st.markdown(
+        f"""
+        <table class="summary-table">
+            <thead>
+                <tr>
+                    <th>Region Code</th>
+                    <th>Region Name</th>
+                    <th>Province Code</th>
+                    <th>Province Name</th>
+                    <th>City/Municipality Code</th>
+                    <th>City/Municipality Name</th>
+                </tr>
+            </thead>
+            <tbody>
+                <tr>
+                    <td class="mono-cell">{effective_reg}</td>
+                    <td>{m_res['reg_name']}</td>
+                    <td class="mono-cell">{effective_prov}</td>
+                    <td>{m_res['prov_name']}</td>
+                    <td class="mono-cell">{effective_city}</td>
+                    <td>{m_res['city_name']}</td>
+                </tr>
+            </tbody>
+        </table>
+        """,
+        unsafe_allow_html=True,
     )
 
-    if uploaded_file is not None:
-        file_bytes = uploaded_file.getvalue()
-        with st.spinner("Syncing PSGC Location hierarchy from ERPNext..."):
-            id_to_name, id_to_parent, tree_source = get_combined_psgc_maps(
-                erpn_url, erpn_user, erpn_pass, file_bytes
-            )
-
-        df_in = pd.read_excel(io.BytesIO(file_bytes), sheet_name=0, dtype=str).fillna("")
-        required_cols = ["Institution Name", "Region", "Province", "City/Municipality"]
-        missing_cols = [c for c in required_cols if c not in df_in.columns]
-
-        if missing_cols:
-            st.error(f"Missing required columns: {', '.join(missing_cols)}")
-            st.stop()
-
-        # Enrich dataframe with resolved ERPNext Region, Province, and City names for searching
-        df_in["_row_num"] = range(1, len(df_in) + 1)
-        df_in["_reg_name"] = (
-            df_in["Region"].str.strip().map(lambda x: id_to_name.get(x, x))
+elif effective_reg or effective_prov:
+    # Partial selection preview (when Region or Province is selected and awaiting City)
+    p_c1, p_c2, p_c3 = st.columns(3)
+    with p_c1:
+        r_name = (
+            m_names.get(effective_reg, "—") if effective_reg else "Select Region..."
         )
-        df_in["_prov_name"] = (
-            df_in["Province"].str.strip().map(lambda x: id_to_name.get(x, x))
+        st.markdown(
+            f"""
+            <div class="psgc-card">
+                <div>
+                    <div class="psgc-level">LEVEL 1 • REGION</div>
+                    <div class="psgc-name">{r_name}</div>
+                </div>
+                <div>
+                    <div class="psgc-code">{effective_reg or '—'}</div>
+                    <div class="psgc-link-ok">✔ Root Region Selected</div>
+                </div>
+            </div>
+            """,
+            unsafe_allow_html=True,
         )
-        df_in["_city_name"] = (
-            df_in["City/Municipality"].str.strip().map(lambda x: id_to_name.get(x, x))
+    with p_c2:
+        p_name = (
+            m_names.get(effective_prov, "Select Province...")
+            if effective_prov
+            else "Select Province..."
         )
-
-        # Optional DOH source columns if Audit_Verification exists
-        xls_sheets = pd.ExcelFile(io.BytesIO(file_bytes)).sheet_names
-        audit_source_df = None
-        if "Audit_Verification" in xls_sheets:
-            audit_source_df = pd.read_excel(
-                io.BytesIO(file_bytes), sheet_name="Audit_Verification", dtype=str
-            ).fillna("")
-
-        total_rows = len(df_in)
-
-        if (
-            "current_idx" not in st.session_state
-            or st.session_state.get("file_name") != uploaded_file.name
-        ):
-            st.session_state.current_idx = 0
-            st.session_state.verified_rows = set()
-            st.session_state.file_name = uploaded_file.name
-
-        # --- SEARCHABLE PSGC FILTERS (Region -> Province -> City/Municipality) ---
-        with st.container(border=True):
-            st.caption(
-                "🔎 **Search & Filter Records by ERPNext PSGC Region, Province, or City/Municipality**"
-            )
-            f_col1, f_col2, f_col3 = st.columns(3)
-
-            reg_options_map = {}
-            for r_code in df_in["Region"].str.strip().unique():
-                if r_code:
-                    reg_options_map[f"{id_to_name.get(r_code, r_code)} ({r_code})"] = (
-                        r_code
-                    )
-            reg_labels = sorted(reg_options_map.keys())
-
-            with f_col1:
-                sel_reg_label = st.selectbox(
-                    "Filter by Region",
-                    options=reg_labels,
-                    index=None,
-                    placeholder="🔍 Search Region (Name or Code)...",
-                )
-                sel_reg_code = (
-                    reg_options_map.get(sel_reg_label) if sel_reg_label else None
-                )
-
-            df_prov_scope = (
-                df_in[df_in["Region"].str.strip() == sel_reg_code]
-                if sel_reg_code
-                else df_in
-            )
-            prov_options_map = {}
-            for p_code in df_prov_scope["Province"].str.strip().unique():
-                if p_code:
-                    prov_options_map[f"{id_to_name.get(p_code, p_code)} ({p_code})"] = (
-                        p_code
-                    )
-            prov_labels = sorted(prov_options_map.keys())
-
-            with f_col2:
-                sel_prov_label = st.selectbox(
-                    "Filter by Province",
-                    options=prov_labels,
-                    index=None,
-                    placeholder="🔍 Search Province (Name or Code)...",
-                )
-                sel_prov_code = (
-                    prov_options_map.get(sel_prov_label) if sel_prov_label else None
-                )
-
-            df_city_scope = (
-                df_prov_scope[df_prov_scope["Province"].str.strip() == sel_prov_code]
-                if sel_prov_code
-                else df_prov_scope
-            )
-            city_options_map = {}
-            for c_code in df_city_scope["City/Municipality"].str.strip().unique():
-                if c_code:
-                    city_options_map[f"{id_to_name.get(c_code, c_code)} ({c_code})"] = (
-                        c_code
-                    )
-            city_labels = sorted(city_options_map.keys())
-
-            with f_col3:
-                sel_city_label = st.selectbox(
-                    "Filter by City/Municipality",
-                    options=city_labels,
-                    index=None,
-                    placeholder="🔍 Search City/Municipality (Name or Code)...",
-                )
-                sel_city_code = (
-                    city_options_map.get(sel_city_label) if sel_city_label else None
-                )
-
-        # Apply active Region / Province / City filters
-        filtered_df = df_in.copy()
-        if sel_reg_code:
-            filtered_df = filtered_df[filtered_df["Region"].str.strip() == sel_reg_code]
-        if sel_prov_code:
-            filtered_df = filtered_df[
-                filtered_df["Province"].str.strip() == sel_prov_code
-            ]
-        if sel_city_code:
-            filtered_df = filtered_df[
-                filtered_df["City/Municipality"].str.strip() == sel_city_code
-            ]
-
-        filtered_indices = filtered_df.index.tolist()
-        if not filtered_indices:
-            st.warning(
-                "No institutions match the selected Region / Province / City filter."
-            )
-            st.stop()
-
-        if st.session_state.current_idx not in filtered_indices:
-            st.session_state.current_idx = filtered_indices[0]
-
-        idx = st.session_state.current_idx
-        pos_in_filter = filtered_indices.index(idx)
-        verified_count = len(st.session_state.verified_rows)
-
-        # Top KPI Metrics
-        m1, m2, m3, m4 = st.columns(4)
-        m1.metric(
-            "Current Record",
-            f"{pos_in_filter + 1:,} / {len(filtered_indices):,}",
-            help=f"Global Row {idx + 1} of {total_rows:,}",
+        p_status = (
+            f"✔ Linked to {effective_reg}"
+            if effective_prov
+            else "Awaiting Province selection"
         )
-        m2.metric("Manually Verified", f"{verified_count:,} / {total_rows:,}")
-        m3.metric("Remaining", f"{total_rows - verified_count:,}")
-        m4.metric("Review Progress", f"{(verified_count / total_rows * 100):.1f}%")
-
-        # --- 1-BY-1 NAVIGATION & OMNI-SEARCH BAR (Institution + Region + Province + City) ---
-        nav1, nav2, nav3, nav4 = st.columns([1.2, 5.2, 1.2, 1.8])
-
-        with nav1:
-            if st.button(
-                "⬅️ Previous",
-                use_container_width=True,
-                disabled=(pos_in_filter <= 0),
-            ):
-                st.session_state.current_idx = filtered_indices[pos_in_filter - 1]
-                st.rerun()
-
-        with nav2:
-            option_labels = []
-            for i in filtered_indices:
-                r_item = df_in.iloc[i]
-                check_mark = "✅ " if i in st.session_state.verified_rows else ""
-                label = (
-                    f"[Row {i + 1}] {check_mark}{r_item['Institution Name']} • "
-                    f"{r_item['_reg_name']} | {r_item['_prov_name']} | "
-                    f"{r_item['_city_name']} ({r_item['City/Municipality']})"
-                )
-                option_labels.append(label)
-
-            selected_label = st.selectbox(
-                "Search by Institution, Region, Province, City, or PSGC Code",
-                options=option_labels,
-                index=pos_in_filter,
-                label_visibility="collapsed",
-                placeholder="🔍 Type Institution, Region, Province, City, or PSGC Code...",
-            )
-            new_pos = option_labels.index(selected_label)
-            new_idx = filtered_indices[new_pos]
-            if new_idx != idx:
-                st.session_state.current_idx = new_idx
-                st.rerun()
-
-        with nav3:
-            if st.button(
-                "Next ➡️",
-                use_container_width=True,
-                disabled=(pos_in_filter >= len(filtered_indices) - 1),
-            ):
-                st.session_state.current_idx = filtered_indices[pos_in_filter + 1]
-                st.rerun()
-
-        with nav4:
-            if st.button("✅ Verify & Next", type="primary", use_container_width=True):
-                st.session_state.verified_rows.add(idx)
-                if pos_in_filter < len(filtered_indices) - 1:
-                    st.session_state.current_idx = filtered_indices[pos_in_filter + 1]
-                st.rerun()
-
-        # Run 1-by-1 Audit on Current Record with Progress Bar
-        cur_row = df_in.iloc[st.session_state.current_idx]
-        inst_name = str(cur_row["Institution Name"]).strip()
-        reg_code = str(cur_row["Region"]).strip()
-        prov_code = str(cur_row["Province"]).strip()
-        city_code = str(cur_row["City/Municipality"]).strip()
-
-        pbar = st.progress(0, text="Initializing 1-by-1 PSGC hierarchy check...")
-        res = audit_single_triplet(
-            reg_code,
-            prov_code,
-            city_code,
-            erpn_url,
-            erpn_user,
-            erpn_pass,
-            id_to_name,
-            id_to_parent,
-            progress_bar=pbar,
+        st.markdown(
+            f"""
+            <div class="psgc-card">
+                <div>
+                    <div class="psgc-level">LEVEL 2 • PROVINCE</div>
+                    <div class="psgc-name">{p_name}</div>
+                </div>
+                <div>
+                    <div class="psgc-code">{effective_prov or '—'}</div>
+                    <div class="psgc-link-ok">{p_status}</div>
+                </div>
+            </div>
+            """,
+            unsafe_allow_html=True,
         )
-        pbar.progress(
-            100,
-            text=(
-                f"1-by-1 Check Complete • Source: {res['source']} • "
-                f"Row {st.session_state.current_idx + 1} of {total_rows}"
-            ),
+    with p_c3:
+        st.markdown(
+            """
+            <div class="psgc-card">
+                <div>
+                    <div class="psgc-level">LEVEL 3 • CITY / MUNICIPALITY</div>
+                    <div class="psgc-name">Select City/Municipality...</div>
+                </div>
+                <div>
+                    <div class="psgc-code">—</div>
+                    <div class="psgc-link-ok">Select a City/Municipality above to complete audit</div>
+                </div>
+            </div>
+            """,
+            unsafe_allow_html=True,
         )
-
-        # Display 1-by-1 Audit Card
-        with st.container(border=True):
-            head_left, head_right = st.columns([3, 1])
-            with head_left:
-                st.subheader(f"🏥 {inst_name}")
-            with head_right:
-                if res["all_ok"]:
-                    st.success("✅ 100% PSGC MATCH")
-                else:
-                    st.error("❌ HIERARCHY MISMATCH")
-
-            c_reg, c_prov, c_city = st.columns(3)
-
-            doh_reg, doh_prov, doh_city = "", "", ""
-            if audit_source_df is not None and st.session_state.current_idx < len(
-                audit_source_df
-            ):
-                arow = audit_source_df.iloc[st.session_state.current_idx]
-                doh_reg = str(arow.get("DOH_Region", ""))
-                doh_prov = str(arow.get("DOH_Province", ""))
-                doh_city = str(arow.get("DOH_City", ""))
-
-            with c_reg:
-                with st.container(border=True):
-                    st.caption("LEVEL 1 • REGION")
-                    st.markdown(f"### `{reg_code}`")
-                    st.write(f"**ERPNext Name:** {res['reg_name']}")
-                    if doh_reg:
-                        st.caption(f"DOH Original: {doh_reg}")
-                    if res["reg_ok"]:
-                        st.success(f"✔ {res['reg_msg']}")
-                    else:
-                        st.error(f"✖ {res['reg_msg']}")
-
-            with c_prov:
-                with st.container(border=True):
-                    st.caption("LEVEL 2 • PROVINCE")
-                    st.markdown(f"### `{prov_code}`")
-                    st.write(f"**ERPNext Name:** {res['prov_name']}")
-                    if doh_prov:
-                        st.caption(f"DOH Original: {doh_prov}")
-                    if res["prov_ok"]:
-                        st.success(f"✔ {res['prov_msg']}")
-                    else:
-                        st.error(f"✖ {res['prov_msg']}")
-
-            with c_city:
-                with st.container(border=True):
-                    st.caption("LEVEL 3 • CITY / MUNICIPALITY")
-                    st.markdown(f"### `{city_code}`")
-                    st.write(f"**ERPNext Name:** {res['city_name']}")
-                    if doh_city:
-                        st.caption(f"DOH Original: {doh_city}")
-                    if res["city_ok"]:
-                        st.success(f"✔ {res['city_msg']}")
-                    else:
-                        st.error(f"✖ {res['city_msg']}")
-
-        # Download Clean Import File
-        st.divider()
-        dl_col1, dl_col2 = st.columns([3, 1])
-        with dl_col1:
-            st.caption(
-                "Ready to import into ERPNext? Download the 4-column Institution file with Text-formatted PSGC codes."
-            )
-        with dl_col2:
-            clean_export_df = df_in[
-                ["Institution Name", "Region", "Province", "City/Municipality"]
-            ]
-            st.download_button(
-                label="📥 Download ERPN Import (.xlsx)",
-                data=to_clean_excel_bytes(clean_export_df),
-                file_name="ERPN_Verified_Institution_Import.xlsx",
-                mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-                use_container_width=True,
-            )
-
-with tab_manual:
-    st.subheader("🌐 Search & Test ERPNext PSGC Doctype (By Region, Province, and City)")
-    with st.spinner("Loading ERPNext PSGC Location tree..."):
-        m_names, m_parents, m_source = get_combined_psgc_maps(
-            erpn_url,
-            erpn_user,
-            erpn_pass,
-            uploaded_file.getvalue() if uploaded_file is not None else None,
-        )
-
-    if m_parents:
-        all_regions = {
-            f"{m_names.get(k, k)} ({k})": k
-            for k, p in m_parents.items()
-            if p == ""
-        }
-        reg_set = set(all_regions.values())
-        all_provinces = {
-            f"{m_names.get(k, k)} ({k})": k
-            for k, p in m_parents.items()
-            if p in reg_set
-        }
-        prov_set = set(all_provinces.values())
-        all_cities = {
-            f"{m_names.get(k, k)} ({k})": k
-            for k, p in m_parents.items()
-            if p in prov_set
-        }
-
-        col_a, col_b, col_c = st.columns(3)
-        with col_a:
-            m_reg_label = st.selectbox(
-                "1. Search Region",
-                options=sorted(all_regions.keys()),
-                index=None,
-                placeholder="🔍 Type Region name or PSGC code...",
-            )
-            m_reg_code = all_regions.get(m_reg_label, "") if m_reg_label else ""
-
-        with col_b:
-            scoped_provs = {
-                lbl: k
-                for lbl, k in all_provinces.items()
-                if not m_reg_code or m_parents.get(k) == m_reg_code
-            }
-            m_prov_label = st.selectbox(
-                "2. Search Province",
-                options=sorted(scoped_provs.keys()),
-                index=None,
-                placeholder="🔍 Type Province name or PSGC code...",
-            )
-            m_prov_code = scoped_provs.get(m_prov_label, "") if m_prov_label else ""
-
-        with col_c:
-            scoped_cities = {
-                lbl: k
-                for lbl, k in all_cities.items()
-                if (not m_prov_code or m_parents.get(k) == m_prov_code)
-                and (
-                    not m_reg_code
-                    or m_parents.get(m_parents.get(k, ""), "") == m_reg_code
-                )
-            }
-            m_city_label = st.selectbox(
-                "3. Search City/Municipality",
-                options=sorted(scoped_cities.keys()),
-                index=None,
-                placeholder="🔍 Type City/Municipality name or PSGC code...",
-            )
-            m_city_code = scoped_cities.get(m_city_label, "") if m_city_label else ""
-
-        effective_city = m_city_code
-        effective_prov = m_prov_code or (
-            m_parents.get(effective_city, "") if effective_city else ""
-        )
-        effective_reg = m_reg_code or (
-            m_parents.get(effective_prov, "") if effective_prov else ""
-        )
-
-        if effective_reg and effective_prov and effective_city:
-            m_pbar = st.progress(0, text="Checking selected PSGC hierarchy...")
-            m_res = audit_single_triplet(
-                effective_reg,
-                effective_prov,
-                effective_city,
-                erpn_url,
-                erpn_user,
-                erpn_pass,
-                m_names,
-                m_parents,
-                progress_bar=m_pbar,
-            )
-            if m_res["all_ok"]:
-                st.success(
-                    f"✅ **100% Valid Hierarchy** ({m_res['source']}): "
-                    f"**Region:** `{effective_reg}` ({m_res['reg_name']}) → "
-                    f"**Province:** `{effective_prov}` ({m_res['prov_name']}) → "
-                    f"**City/Municipality:** `{effective_city}` ({m_res['city_name']})"
-                )
-            else:
-                st.error(
-                    f"❌ **Hierarchy Mismatch**: Region: {m_res['reg_msg']} | "
-                    f"Province: {m_res['prov_msg']} | City: {m_res['city_msg']}"
-                )
-        else:
-            st.info(
-                "👆 Search and select a **Region**, **Province**, or **City/Municipality** above to verify its exact ERPNext PSGC code hierarchy."
-            )
+else:
+    st.info(
+        "👆 Search and select any **Region**, **Province**, or **City/Municipality** above to preview and verify its aligned ERPNext PSGC hierarchy."
+    )

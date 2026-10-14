@@ -435,18 +435,7 @@ def to_clean_excel_bytes(df_export: pd.DataFrame) -> bytes:
             for cell in row:
                 cell.number_format = "@"
     return output.getvalue()
-
-
-# --- SIDEBAR: ERPNext Connection ---
-with st.sidebar:
-    st.subheader("🔗 ERPNext Connection")
-    erpn_url = st.text_input("ERPNext Base URL", value="https://dev.pmii-marketing.com")
-    erpn_user = st.text_input("Username", value="jptan@profinsights.biz")
-    erpn_pass = st.text_input("Password", value="pims@admin", type="password")
-    if st.button("🔄 Reset Connection Cache", use_container_width=True):
-        st.cache_resource.clear()
-        st.cache_data.clear()
-        st.toast("Connection cache cleared.")
+    
 
 # --- HEADER ---
 st.title("🏥 ERPNext PSGC 1-by-1 Auditor")
